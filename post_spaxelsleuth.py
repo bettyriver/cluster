@@ -230,15 +230,96 @@ def get_table_bulk(galaxy_list,bin_type):
     metal_fits_path =  spaxelsleuth_path + 'metallicity/'
     sfr_path = spaxelsleuth_path + 'sfr_related/'
     
+    cluster_csv = pd.read_csv(parent_path+
+                              'cluster_classification_from_Oguzhan/'+
+                              'HECTOR_cluster_galaxies.csv')
     
     
     for galaxy_id in galaxy_list:
         metal_fits = fits.open(metal_fits_path + galaxy_id + '_metalicity.fits')
         sfr_fits = fits.open(sfr_path + galaxy_id + '_sfr_related.fits')
         # create dist_arr in kpc for this galaxy
+        query = cluster_csv['name']==galaxy_id[:-1]
         
+        map_shape = sfr_fits['BPT (numeric) (total)'].data.shape
         
+        xcen = cluster_csv['xcen'][query].to_numpy()[0]
+        ycen = cluster_csv['ycen'][query].to_numpy()[0]
+        z = cluster_csv['z'][query].to_numpy()[0]
+        re = cluster_csv['Re'][query].to_numpy()[0]
+        b_a = cluster_csv['B_on_A'][query].to_numpy()[0]
+        pa = cluster_csv['PA'][query].to_numpy()[0]
+        fwhm = cluster_csv['fwhm'][query].to_numpy()[0]
+        ellip = 1 - b_a
         
+        dist_arr = ellip_distarr(size=map_shape, 
+                                 centre=(xcen,ycen),
+                                 ellip=ellip, pa=pa*np.pi/180,angle_type='WTN')
+        radius_kpc = pix_to_kpc(radius_in_pix=dist_arr, z=z,CD2=0.0001388888)
         
         
         # calculate the bin size in kpc depends on the bin type
+        
+
+
+##Create an elliptical distance array for deprojected radial profiles.
+#size=the size of the array. Should be the same as an image input for uf.radial_profile
+#centre=centre of the ellipse
+#ellip=ellipticity of the ellipse=1-b/a
+#pa=position angle of the ellipse starting along the positive x axis of the image
+#Angle type: 'NTE' = North-Through-East (Default). 'WTN'=West-Through-North
+def ellip_distarr(size,centre,ellip,pa,scale=None, angle_type='NTE'):
+    '''
+    1. If PA means the angle of major axis with respect to the North (e.g. 
+        PA in SAMI and profound.ang in MAGPI. note the ang in MAGPI is
+        in the unit of deg, need to convert to rad), use angle_type='WTN'.
+    2. If PA means the angle of major axis with respect to the West, i.e. the
+        positive x axis of the image, use angle_type='NTE'.
+
+    '''
+    y,x=np.indices(size)
+    x=x-centre[0]
+    y=y-centre[1]
+    r=np.sqrt(x**2 + y**2)
+    theta=np.zeros(size)
+    theta[np.where((x>=0) & (y>=0))]=np.arcsin((y/r)[np.where((x>=0) & (y>=0))])
+    theta[np.where((x>=0) & (y<0))]=2.0*np.pi+np.arcsin((y/r)[np.where((x>=0) & (y<0))])
+    theta[np.where((x<0) & (y>=0))]=np.pi-np.arcsin((y/r)[np.where((x<0) & (y>=0))])
+    theta[np.where((x<0) & (y<0))]=np.pi-np.arcsin((y/r)[np.where((x<0) & (y<0))])
+    if angle_type=='NTE':
+        theta=theta+np.pi/2.0
+    scdistarr=np.nan_to_num(np.sqrt((((np.sin(theta-pa))**2)+(1-ellip)**-2*(np.cos(theta-pa))**2))*r) ##SHOULD BE (1-ellip)**-2 !!!!
+    #if scale=None:
+    return scdistarr
+
+def pix_to_kpc(radius_in_pix,z,CD2=5.55555555555556e-05):
+    '''
+    author: yifan
+
+    Parameters
+    ----------
+    radius_in_pix : float
+        radius get from cont_r50_ind=get_x(r,cog,0.5)
+    z : float
+        redshift
+    CD2 : float
+        CD2 in fits
+
+    Returns
+    -------
+    None.
+
+    '''
+    from astropy.cosmology import LambdaCDM
+    lcdm = LambdaCDM(70,0.3,0.7)
+    ang = radius_in_pix * CD2 # deg
+    distance = lcdm.angular_diameter_distance(z).value # angular diameter distance
+    radius_in_kpc = ang*np.pi/180*distance*1000
+    return radius_in_kpc
+
+def arcsec_to_kpc(rad_in_arcsec,z):
+    from astropy.cosmology import LambdaCDM
+    lcdm = LambdaCDM(70,0.3,0.7)
+    distance = lcdm.angular_diameter_distance(z).value # angular diameter distance, Mpc/radian
+    rad_in_kpc = rad_in_arcsec * distance * np.pi/(180*3600)*1000
+    return rad_in_kpc
