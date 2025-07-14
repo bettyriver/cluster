@@ -15,6 +15,7 @@ import hector_spaxelsleuth as hss
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from scipy.optimize import curve_fit
+import os
 
 def make_ss_overviewplot(metal_fits,sfr_fits,dist_arr,bin_size,re_kpc,title,
                          savepath=None):
@@ -683,8 +684,56 @@ def get_overview_bulk(galaxy_list,bin_type,savepath):
         if overview is None:
             
             print(galaxy_id+' no measurement.')
+
+def get_metallicity_gradient_table_bulk(galaxy_list,bin_type,savepath):
+    parent_path = '/Users/ymai0110/Documents/cluster_galaxies/'
+    table_path = parent_path +'spaxelsleuth/bin_metallicity_025Re/'
+    all_diag = hss.Spaxelsleuth.metal_ext_names
     
+    # initialize
+    results = []
     
+    for galaxy_id in galaxy_list:
+        if not os.path.exists(table_path+galaxy_id[:-1]+'.csv'):
+            
+            print(galaxy_id+' csv not exist')
+            continue
+            
+            
+        df = pd.read_csv(table_path+galaxy_id[:-1]+'.csv')
+        row = {"name":galaxy_id[:-1]}
+        row["identifier"] = galaxy_id[-1]
+        radius_arr = df['bin_arr_kpc']
+        
+        for i, metal_diag in enumerate(all_diag):
+            
+            # ext name for this diagnostic
+            diag_name = metal_diag[15:-9]
+            ave1_name = diag_name + '(eq)'
+            ave1_err_name = diag_name + '(eq_err)'
+            
+            ave2_name = diag_name + '(inv)'
+            ave2_err_name = diag_name + '(inv_err)'
+            
+            metal_arr = df[ave2_name]
+            metal_err_arr = df[ave2_err_name]
+            
+            gradient, gradient_err, central_metal, central_metal_err = \
+                calculate_gradient(radius_arr=radius_arr, 
+                                   metal_arr=metal_arr, 
+                                   metal_err_arr=metal_err_arr)
+            row[diag_name+'_gradient'] = gradient
+            row[diag_name+'_gradient_err'] = gradient_err
+            row[diag_name+'_central'] = central_metal
+            row[diag_name+'_central_err'] = central_metal_err
+        
+        results.append(row)
+        print(galaxy_id + ' done')
+    
+    df_results = pd.DataFrame(results)
+    df_results.to_csv(savepath, index=False)
+    return df_results
+            
 
 def get_table_bulk(galaxy_list,bin_type,savepath):
     '''
