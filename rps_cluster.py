@@ -272,7 +272,7 @@ def read_emi_dc(catid,emi_line):
     '''
     
     datapath = '/Users/ymai0110/Documents/cluster_galaxies/SAMI_datacentral/'
-    datapath += 'sami_' + emi_line + '/'
+    datapath += 'sami_strong_emission/'
     datapath += 'dr3/ifs/' + str(catid) + '/'
     datapath += str(catid) + '_A_' + emi_line
     datapath += '_default_recom-comp.fits'
