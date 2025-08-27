@@ -20,6 +20,13 @@ from rps_cluster import read_emi_dc
 import numpy as np
 from astropy.io import fits
 import matplotlib.pyplot as plt
+import pandas as pd
+import os
+from math import ceil
+from post_spaxelsleuth import get_bin_metallicity, calculate_gradient
+
+
+from metalgradient import ellip_distarr, pix_to_kpc, arcsec_to_kpc
 
 class EmissionLines:
     wavelengths = {
@@ -90,7 +97,9 @@ def make_metal_fits(catid,z,foreground_E_B_V,savepath):
     
     #### BPT calculation ####
     
-    AGN, CP, SF_region = get_SF_region(emission_data_correction)
+    # no need to use corrected emissioin lines for BPT, as those pairs are
+    # closed to each other
+    AGN, CP, SF_region = get_SF_region(emission_data)
     
     
     
@@ -293,4 +302,216 @@ def get_SF_region(emission_data_dic):
     AGN, CP, SF, *not_need= bptregion(x_type, y_type, mode='N2')
     
     return AGN, CP, SF
+
+
+def get_metallicity_gradient_table_bulk_SAMI(galaxy_list,savepath):
+    parent_path = '/Users/ymai0110/Documents/cluster_galaxies/'
+    table_path = parent_path +'SAMI_metallicity_gradient/bin_metallicity_025Re/'
+    all_diag = ['N2S2HA','SCAL']
     
+    # initialize
+    results = []
+    
+    for galaxy_id in galaxy_list:
+        if not os.path.exists(table_path+str(galaxy_id)+'.csv'):
+            
+            print(str(galaxy_id)+' csv not exist')
+            continue
+            
+            
+        df = pd.read_csv(table_path+str(galaxy_id)+'.csv')
+        row = {"CATID":galaxy_id}
+        
+        radius_arr = df['bin_arr_kpc']
+        
+        for i, metal_diag in enumerate(all_diag):
+            
+            # ext name for this diagnostic
+            diag_name = metal_diag
+            ave1_name = diag_name + '(eq)'
+            ave1_err_name = diag_name + '(eq_err)'
+            
+            ave2_name = diag_name + '(inv)'
+            ave2_err_name = diag_name + '(inv_err)'
+            
+            metal_arr = df[ave2_name]
+            metal_err_arr = df[ave2_err_name]
+            
+            gradient, gradient_err, central_metal, central_metal_err = \
+                calculate_gradient(radius_arr=radius_arr, 
+                                   metal_arr=metal_arr, 
+                                   metal_err_arr=metal_err_arr)
+            row[diag_name+'_gradient'] = gradient
+            row[diag_name+'_gradient_err'] = gradient_err
+            row[diag_name+'_central'] = central_metal
+            row[diag_name+'_central_err'] = central_metal_err
+        
+        results.append(row)
+        print(str(galaxy_id) + ' done')
+    
+    df_results = pd.DataFrame(results)
+    df_results.to_csv(savepath, index=False)
+    return df_results
+
+def get_table_bulk_SAMI(galaxy_list,savepath):
+    '''
+    for galaxies in the list, get bin metallicity for all diagnostics
+
+    Parameters
+    ----------
+    galaxy_list : list of str
+        list of galaxy id (str). note this name should include both ID and 
+        identifier (e.g. C9001A)
+    bin_type: str
+        'Re' or 'PSF'. If 'Re', the bin_size is 0.25 Re. If 'PSF', the bin
+        size is 0.5 PSF.
+
+    Returns
+    -------
+    None.
+
+    '''
+    parent_path = '/Users/ymai0110/Documents/cluster_galaxies/'
+    
+    
+    metal_fits_path =  parent_path +  'SAMI_metallicity/'
+    #sfr_path = spaxelsleuth_path + 'sfr_related/'
+    
+    
+    cluster_csv = pd.read_csv(parent_path+
+                              'cluster_classification_from_Oguzhan/'+
+                              'SAMI_DR3_Cluster_Galaxies_Oguzhan_sample_metalyifan.csv')
+    
+    for galaxy_id in galaxy_list:
+        metal_fits = fits.open(metal_fits_path + str(galaxy_id) + '.fits')
+        
+        # create dist_arr in kpc for this galaxy
+        query = cluster_csv['CATID']==galaxy_id
+        
+        map_shape = metal_fits['SCAL'].data.shape
+        
+        xcen = map_shape[1]/2-0.5 # cube center and galaxy center, in the unit of pixel
+        ycen = map_shape[0]/2-0.5
+        
+        z = cluster_csv['z_spec'][query].to_numpy()[0]
+        re = cluster_csv['r_e'][query].to_numpy()[0] # r-band major axis effective radius in arcsec
+        #b_a = cluster_csv['B_on_A'][query].to_numpy()[0]
+        pa = cluster_csv['PA'][query].to_numpy()[0] # r-band position angle in deg
+        #fwhm = cluster_csv['fwhm'][query].to_numpy()[0] # FWHM of PSF in cube in arcsec
+        ellip = cluster_csv['ellip'][query].to_numpy()[0] # r-band ellipticity
+        
+        
+        
+        dist_arr = ellip_distarr(size=map_shape, 
+                                 centre=(xcen,ycen),
+                                 ellip=ellip, pa=pa*np.pi/180,angle_type='WTN')
+        radius_kpc = pix_to_kpc(radius_in_pix=dist_arr, z=z,CD2=0.0001388888)
+        
+        re_kpc = arcsec_to_kpc(rad_in_arcsec=re, z=z)
+        #fwhm_kpc = arcsec_to_kpc(rad_in_arcsec=fwhm, z=z)
+        # calculate the bin size in kpc depends on the bin type
+        
+        bin_size_kpc = re_kpc/4.0
+        
+        
+        # calculate the dataframe for bin metallicity table and save it
+        
+        df = make_bin_metal_table_SAMI(metal_fits=metal_fits,
+                                  dist_arr=radius_kpc,
+                                  bin_size=bin_size_kpc)
+        if isinstance(df, pd.DataFrame):
+            
+        
+            df.to_csv(savepath+str(galaxy_id)+'.csv')
+        else:
+            print(str(galaxy_id)+' no measurement.')
+
+def make_bin_metal_table_SAMI(metal_fits,dist_arr,bin_size):
+    '''
+    Make a table that includes binned metallicity for all diagnostics
+    
+    Each column is a dignostic and each row is 0.25 Re/0.5 PSF bin. The number of 
+    row depends on the BPT map of galaxy.
+    
+    Parameters
+    ----------
+    metal_fits: astropy.fits
+        FITS document for metallicity from spaxelsleuth. It includes 
+        metallicity measured using different diagnostics.
+    sfr_fits: astropy.fits
+        FITS document for SFR related from spaxelsleuth. It includes BPT map.
+    dist_arr: numpy.2d-array
+        2d-array that gives the distance to the centre in kpc
+    bin_size: float
+        The size of bin in kpc
+
+    Returns
+    -------
+    metal_table: pandas.DataFrame
+        a dataframe that each row is one bin, each column is a diagnostic
+
+    '''
+    
+    all_diag = ['N2S2HA','SCAL']
+    
+    metal_map_1 = metal_fits[all_diag[0]].data
+    metal_map_2 = metal_fits[all_diag[1]].data
+    
+    BPT_map = np.where(np.isnan(metal_map_1)&np.isnan(metal_map_2), 1, 0)
+    
+    
+    # check if any SF spaxel, if not, simply return 0
+    has_SF = np.any(~np.isnan(metal_fits['SCAL'].data)) | np.any(~np.isnan(metal_fits['N2S2HA'].data))
+    
+    if has_SF==False:
+        print('no SF spaxel in this galaxy')
+        return None
+    
+    # create bin dist arr for the whole table
+    SF_query = BPT_map==0
+    dist_arr_mask = dist_arr[SF_query]
+    
+    dist_max  = np.nanmax(dist_arr_mask)
+    bin_num = ceil(dist_max/bin_size)
+    bin_arr_kpc = []
+    for i in range(bin_num):
+        bin_arr_kpc.append(i*bin_size+0.5*bin_size)
+    bin_arr_kpc = np.array(bin_arr_kpc)
+    
+    
+    df = pd.DataFrame({'bin_arr_kpc':bin_arr_kpc})
+    
+    # get bin metallicity for all diagnostics, loop 
+    
+    
+    
+    for metal_diag in all_diag:
+        
+        
+    
+        err_map = metal_fits[metal_diag + '_ERR'].data
+        
+        metal_map = metal_fits[metal_diag].data
+        
+        # ext name for this diagnostic
+        diag_name = metal_diag
+        ave1_name = diag_name + '(eq)'
+        ave1_err_name = diag_name + '(eq_err)'
+        
+        ave2_name = diag_name + '(inv)'
+        ave2_err_name = diag_name + '(inv_err)'
+
+        a1, e1, a2, e2 = get_bin_metallicity(
+                            metal_map=metal_map,
+                            error_map=err_map,
+                            BPT_map=BPT_map,
+                            dist_arr=dist_arr,
+                            bin_size=bin_size)
+        
+        df[ave1_name] = a1
+        df[ave1_err_name] = e1
+        df[ave2_name] = a2
+        df[ave2_err_name] = e2
+    
+    
+    return df
