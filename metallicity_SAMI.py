@@ -515,3 +515,91 @@ def make_bin_metal_table_SAMI(metal_fits,dist_arr,bin_size):
     
     
     return df
+
+
+
+def get_table_bulk_SAMI_1Re_metallicity(galaxy_list,savepath):
+    '''
+    for galaxies in the list, get metallicity within 1 Re for all diagnostics
+
+    Parameters
+    ----------
+    galaxy_list : list of str
+        list of galaxy id (str). note this name should include both ID and 
+        identifier (e.g. C9001A)
+    bin_type: str
+        'Re' or 'PSF'. If 'Re', the bin_size is 0.25 Re. If 'PSF', the bin
+        size is 0.5 PSF.
+
+    Returns
+    -------
+    None.
+
+    '''
+    parent_path = '/Users/ymai0110/Documents/cluster_galaxies/'
+    
+    
+    metal_fits_path =  parent_path +  'SAMI_metallicity/'
+    #sfr_path = spaxelsleuth_path + 'sfr_related/'
+    
+    
+    cluster_csv = pd.read_csv(parent_path+
+                              'cluster_classification_from_Oguzhan/'+
+                              'SAMI_DR3_Cluster_Galaxies_Oguzhan_sample_metalyifan.csv')
+    
+    for galaxy_id in galaxy_list:
+        metal_fits = fits.open(metal_fits_path + str(galaxy_id) + '.fits')
+        
+        # create dist_arr in kpc for this galaxy
+        query = cluster_csv['CATID']==galaxy_id
+        
+        map_shape = metal_fits['SCAL'].data.shape
+        
+        xcen = map_shape[1]/2-0.5 # cube center and galaxy center, in the unit of pixel
+        ycen = map_shape[0]/2-0.5
+        
+        z = cluster_csv['z_spec'][query].to_numpy()[0]
+        re = cluster_csv['r_e'][query].to_numpy()[0] # r-band major axis effective radius in arcsec
+        #b_a = cluster_csv['B_on_A'][query].to_numpy()[0]
+        pa = cluster_csv['PA'][query].to_numpy()[0] # r-band position angle in deg
+        #fwhm = cluster_csv['fwhm'][query].to_numpy()[0] # FWHM of PSF in cube in arcsec
+        ellip = cluster_csv['ellip'][query].to_numpy()[0] # r-band ellipticity
+        
+        
+        
+        dist_arr = ellip_distarr(size=map_shape, 
+                                 centre=(xcen,ycen),
+                                 ellip=ellip, pa=pa*np.pi/180,angle_type='WTN')
+        radius_kpc = pix_to_kpc(radius_in_pix=dist_arr, z=z,CD2=0.0001388888)
+        
+        re_kpc = arcsec_to_kpc(rad_in_arcsec=re, z=z)
+        #fwhm_kpc = arcsec_to_kpc(rad_in_arcsec=fwhm, z=z)
+        # calculate the bin size in kpc depends on the bin type
+        
+        bin_size_kpc = re_kpc/4.0
+        
+        
+        # calculate the dataframe for bin metallicity table and save it
+        
+        df = pd.DataFrame({'CATID':[galaxy_id]})
+        
+        all_diag = ['N2S2HA','SCAL']
+        
+        flag = 0
+        
+        for diag in all_diag:
+            
+            re_region = radius_kpc <= re_kpc
+            metal_re = metal_fits[diag].data[re_region]
+            mean_metal = np.nanmean(metal_re)
+            df[diag] = mean_metal
+            if not np.isnan(mean_metal):
+                flag += 1
+            
+        
+        if flag > 0:
+            
+        
+            df.to_csv(savepath+str(galaxy_id)+'.csv')
+        else:
+            print(str(galaxy_id)+' no measurement.')
