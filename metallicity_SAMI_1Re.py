@@ -144,7 +144,195 @@ def make_metal_csv(catid,z,foreground_E_B_V,savepath):
     df.to_csv(savepath+str(catid)+'.csv')
     
     return df
+
+
+def calculate_metallicity_sum_mc(emission_data_dic, met_diagnostic,pixel_select,
+                                 n_realiations=1000):
+    '''
+    calculate metallicity uncertainty using Monte Carlo error propagation
+
+    Parameters
+    ----------
+    emission_data_dic : TYPE
+        DESCRIPTION.
+    met_diagnostic : TYPE
+        DESCRIPTION.
+    pixel_select : TYPE
+        DESCRIPTION.
+
+    Returns
+    -------
+    None.
+
+    '''
+    emission_data_dic_orig = emission_data_dic
+    
+    if met_diagnostic == "N2S2Ha_D16":
+        # N2S2Ha - Dopita et al. (2016)
+        nii = emission_data_dic['NII6583']
+        sii = emission_data_dic['SII6716'] + emission_data_dic['SII6731']
+        ha = emission_data_dic['Halpha']
         
+        nii_err = emission_data_dic['NII6583_err']
+        sii_err = np.sqrt(emission_data_dic['SII6716_err']**2 +
+                          emission_data_dic['SII6731_err']**2)
+        ha_err = emission_data_dic['Halpha_err']
+        
+        good_pts = (nii/nii_err >= 1) & (sii/sii_err >=1)
+        
+        pixel_select = pixel_select & good_pts
+        
+        z_stack = []
+        
+        
+        for i in range(n_realiations):
+            emission_data_dic = randomize_emission(emission_data_dic_orig)
+            nii = emission_data_dic['NII6583']
+            sii = emission_data_dic['SII6716'] + emission_data_dic['SII6731']
+            ha = emission_data_dic['Halpha']
+            
+            nii = np.nansum(nii[pixel_select])
+            sii = np.nansum(sii[pixel_select])
+            ha = np.nansum(ha[pixel_select])
+            
+            
+            logR = np.log10(nii / sii) + 0.264 * np.log10(nii / ha)
+            logOH12 = 8.77 + logR + 0.45 * (logR + 0.3)**5
+            
+            z_stack.append(logOH12)
+        return np.nanmedian(z_stack), np.nanstd(z_stack)
+    
+    
+    elif met_diagnostic=="Scal_PG16":
+        oiii = emission_data_dic['OIII5007'] * (1 + 1.0/3.0)
+        sii = emission_data_dic['SII6716'] + emission_data_dic['SII6731']
+        nii = emission_data_dic['NII6583'] * (1 + 1.0/3.0)
+        hb = emission_data_dic['Hbeta']
+        
+        oiii_err = emission_data_dic['OIII5007_err'] * (1 + 1.0/3.0)
+        sii_err = np.sqrt(emission_data_dic['SII6716_err']**2 +
+                          emission_data_dic['SII6731_err']**2)
+        nii_err = emission_data_dic['NII6583_err'] * (1 + 1.0/3.0)
+        hb_err = emission_data_dic['Hbeta_err']
+        
+        
+        pixel_select = pixel_select & (oiii/oiii_err>=1) & (sii/sii_err>=1) \
+            & (nii/nii_err>=1) & (hb/hb_err>=1)
+        z_stack = []
+        
+        
+        for i in range(n_realiations):
+            emission_data_dic = randomize_emission(emission_data_dic_orig)
+            oiii = emission_data_dic['OIII5007'] * (1 + 1.0/3.0)
+            sii = emission_data_dic['SII6716'] + emission_data_dic['SII6731']
+            nii = emission_data_dic['NII6583'] * (1 + 1.0/3.0)
+            hb = emission_data_dic['Hbeta']
+            
+            
+            oiii = np.nansum(oiii[pixel_select])
+            sii = np.nansum(sii[pixel_select])
+            nii = np.nansum(nii[pixel_select])
+            hb = np.nansum(hb[pixel_select])
+            
+            # Scal - Pilyugin & Grebel (2016)
+            logO3S2 = np.log10((oiii) / (sii))  # Their R3/S2
+            logN2Hb = np.log10((nii) / hb)  # Their N2 
+            logS2Hb = np.log10((sii) / hb)  # Their S2
+
+            # Decide which branch we're on
+            logOH12 = np.full_like(logO3S2, np.nan)
+            #pts_lower = logN2Hb < -0.6
+            #pts_upper = logN2Hb >= -0.6
+            
+            if logN2Hb < -0.6:
+
+                logOH12 = 8.072 + 0.789 * logO3S2 + 0.726 * logN2Hb + ( 1.069 - 0.170 * logO3S2 + 0.022 * logN2Hb) * logS2Hb
+            else:
+                logOH12 = 8.424 + 0.030 * logO3S2 + 0.751 * logN2Hb + (-0.349 + 0.182 * logO3S2 + 0.508 * logN2Hb) * logS2Hb
+            z_stack.append(logOH12)
+        return np.nanmedian(z_stack), np.nanstd(z_stack)
+    
+    if met_diagnostic=='N2O2_K19':
+        # N2O2 - Kewley 2019
+        nii = emission_data_dic['NII6583']
+        oii = emission_data_dic['OII3728'] 
+        
+        
+        nii_err = emission_data_dic['NII6583_err']
+        oii_err = emission_data_dic['OII3728_err']
+        
+        good_pts = (nii/nii_err >= 1) & (oii/oii_err >=1)
+        
+        pixel_select = pixel_select & good_pts
+        z_stack = []
+        
+        
+        for i in range(n_realiations):
+            emission_data_dic = randomize_emission(emission_data_dic_orig)
+            nii = emission_data_dic['NII6583']
+            oii = emission_data_dic['OII3728'] 
+            
+            nii = np.nansum(nii[pixel_select])
+            oii = np.nansum(oii[pixel_select])
+            
+            
+            
+            lognii_oii = np.log10(nii/oii)
+            
+            x = lognii_oii
+            y = -3.17
+            
+            
+            # Calculate z
+            z = (9.4772 + 1.1797 * x + 0.5085 * y + 0.6879 * x * y +
+                 0.2807 * x**2 + 0.1612 * y**2 + 0.1187 * x * y**2 +
+                 0.1200 * y * x**2 + 0.2293 * x**3 + 0.0164 * y**3)
+            z_stack.append(z)
+        return np.nanmedian(z_stack), np.nanstd(z_stack)
+    
+    
+    
+def randomize_emission(emission_data, seed=42, clip_negative=True):
+    """
+    Given a dict with keys 'line' and 'line_err',
+    return a new dict with fluxes perturbed by Gaussian errors.
+    
+    Parameters
+    ----------
+    emission_data : dict
+        Dictionary with keys like 'Halpha', 'Halpha_err', ...
+    seed : int or None
+        Random seed for reproducibility.
+    clip_negative : bool
+        If True, negative draws are clipped to 0.
+    
+    Returns
+    -------
+    dict
+        New dictionary with perturbed fluxes only (no *_err keys).
+    """
+    rng = np.random.default_rng(seed)
+    new_data = {}
+
+    for key in emission_data:
+        if key.endswith('_err'):
+            continue  # skip error arrays
+        flux = emission_data[key]
+        err  = emission_data.get(key + '_err', None)
+        if err is None:
+            raise ValueError(f"Missing error for line {key}")
+
+        # Draw random Gaussian noise
+        perturbed = rng.normal(loc=flux, scale=err)
+
+        if clip_negative:
+            perturbed = np.clip(perturbed, 0, None)
+
+        new_data[key] = perturbed
+
+    return new_data
+
+
     
 def calculate_metallicity_sum(emission_data_dic, met_diagnostic,pixel_select):
     if met_diagnostic == "N2S2Ha_D16":
