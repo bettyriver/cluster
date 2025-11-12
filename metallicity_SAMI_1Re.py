@@ -56,8 +56,32 @@ class EmissionLines:
         return cls.wavelengths[line_name]
 
 
-def make_metal_csv(catid,z,foreground_E_B_V,savepath):
+def make_metal_csv(catid,z,foreground_E_B_V,savepath,csv_path=None,fits_path=None,
+                   emi_datapath=None):
+    '''
     
+
+    Parameters
+    ----------
+    catid : TYPE
+        DESCRIPTION.
+    z : TYPE
+        DESCRIPTION.
+    foreground_E_B_V : TYPE
+        DESCRIPTION.
+    savepath : TYPE
+        DESCRIPTION.
+    csv_path : str, optional
+        csv that have Re, PA, ellip data. The default is None.
+    fits_path : str, optional
+        fits that have datacube, only use to get datacube shape. The default is None.
+
+    Returns
+    -------
+    df : TYPE
+        DESCRIPTION.
+
+    '''
     # get the flux of all emission lines needed
     
     emi_list = ['Halpha','Hbeta','NII6583','OII3728','OIII5007','SII6716',
@@ -67,7 +91,10 @@ def make_metal_csv(catid,z,foreground_E_B_V,savepath):
     emission_data = {}
     
     for line in emi_list:
-        flux, flux_err = read_emi_dc(catid=catid, emi_line=line)
+        flux, flux_err = read_emi_dc(catid=catid, emi_line=line,datapath_other=emi_datapath)
+        if flux is None:
+            print(str(catid)+' file not exists.')
+            return None
         emission_data[line] = flux
         emission_data[line+'_err'] = flux_err
     
@@ -114,7 +141,7 @@ def make_metal_csv(catid,z,foreground_E_B_V,savepath):
     
     
     
-    radius_kpc, re_kpc = get_dist_map(catid)
+    radius_kpc, re_kpc = get_dist_map(catid,csv_path=csv_path,fits_path=fits_path)
     
     pixel_select = (SF_region) & (radius_kpc <= re_kpc)
     
@@ -144,6 +171,126 @@ def make_metal_csv(catid,z,foreground_E_B_V,savepath):
     df.to_csv(savepath+str(catid)+'.csv')
     
     return df
+
+
+def make_metal_csv_05Re(catid,z,foreground_E_B_V,savepath,csv_path=None,fits_path=None,
+                   emi_datapath=None):
+    '''
+    
+
+    Parameters
+    ----------
+    catid : TYPE
+        DESCRIPTION.
+    z : TYPE
+        DESCRIPTION.
+    foreground_E_B_V : TYPE
+        DESCRIPTION.
+    savepath : TYPE
+        DESCRIPTION.
+    csv_path : str, optional
+        csv that have Re, PA, ellip data. The default is None.
+    fits_path : str, optional
+        fits that have datacube, only use to get datacube shape. The default is None.
+
+    Returns
+    -------
+    df : TYPE
+        DESCRIPTION.
+
+    '''
+    # get the flux of all emission lines needed
+    
+    emi_list = ['Halpha','Hbeta','NII6583','OII3728','OIII5007','SII6716',
+                'SII6731']
+    
+    # Dictionary to hold data
+    emission_data = {}
+    
+    for line in emi_list:
+        flux, flux_err = read_emi_dc(catid=catid, emi_line=line,datapath_other=emi_datapath)
+        if flux is None:
+            print(str(catid)+' file not exists.')
+            return None
+        emission_data[line] = flux
+        emission_data[line+'_err'] = flux_err
+    
+    # Dictionary to data after dust correction
+    emission_data_correction = {}
+    
+    # get the dust corrected flux for all emission lines
+    for line in emi_list:
+        
+        # flux that need correction
+        flux = emission_data[line]
+        flux_err = emission_data[line+'_err']
+        
+        ha = emission_data['Halpha']
+        ha_err = emission_data['Halpha_err']
+        hb = emission_data['Hbeta']
+        hb_err = emission_data['Hbeta_err']
+        
+        
+        flux_corr, flux_err_corr = intrinsic_flux_with_err(
+                                        flux_obs=flux,
+                                        flux_obs_err=flux_err,
+                                        wave=EmissionLines.get_wavelength(line),
+                                        ha=ha,
+                                        hb=hb,
+                                        ha_err=ha_err,
+                                        hb_err=hb_err,
+                                        foreground_E_B_V=foreground_E_B_V,
+                                        z=z,
+                                        dust_model='F19')
+        
+        emission_data_correction[line] = flux_corr
+        emission_data_correction[line+'_err'] = flux_err_corr
+    
+    
+    
+    
+    
+    #### BPT calculation ####
+    
+    # no need to use corrected emissioin lines for BPT, as those pairs are
+    # closed to each other
+    AGN, CP, SF_region = get_SF_region(emission_data)
+    
+    
+    
+    radius_kpc, re_kpc = get_dist_map(catid,csv_path=csv_path,fits_path=fits_path)
+    
+    pixel_select = (SF_region) & (radius_kpc <= 0.5*re_kpc)
+    
+    ## to do: decide the minimum number of pixel to keep this galaxy
+    # skip this galaxy if less than 3 pixels is SF
+    if pixel_select.sum() < 3:
+        return None
+    
+    
+    n2s2ha, n2s2ha_err = calculate_metallicity_sum(
+        emission_data_dic=emission_data_correction, 
+        met_diagnostic='N2S2Ha_D16', pixel_select=pixel_select)
+    scal, scal_err = calculate_metallicity_sum(
+        emission_data_dic=emission_data_correction, 
+        met_diagnostic='Scal_PG16', pixel_select=pixel_select)
+    n2o2, n2o2_err = calculate_metallicity_sum(
+        emission_data_dic=emission_data_correction, 
+        met_diagnostic='N2O2_K19', pixel_select=pixel_select)
+    
+    df = pd.DataFrame({'CATID':catid,
+                       'N2S2HA':n2s2ha,
+                       'N2S2HA_err':n2s2ha_err,
+                       'SCAL':scal,
+                       'SCAL_err':scal_err,
+                       'N2O2':n2o2,
+                       'N2O2_err':n2o2_err}, index=[0])
+    df.to_csv(savepath+str(catid)+'.csv')
+    
+    return df
+
+
+
 
 def make_metal_csv_mc(catid,z,foreground_E_B_V,savepath):
     
@@ -255,6 +402,8 @@ def calculate_metallicity_sum_mc(emission_data_dic, met_diagnostic,pixel_select,
     None.
 
     '''
+    # set seed globally once
+    np.random.seed(42)
     emission_data_dic_orig = emission_data_dic
     
     if met_diagnostic == "N2S2Ha_D16":
@@ -382,7 +531,7 @@ def calculate_metallicity_sum_mc(emission_data_dic, met_diagnostic,pixel_select,
     
     
     
-def randomize_emission(emission_data, seed=42, clip_negative=True):
+def randomize_emission(emission_data, seed=None, clip_negative=True):
     """
     Given a dict with keys 'line' and 'line_err',
     return a new dict with fluxes perturbed by Gaussian errors.
@@ -668,25 +817,35 @@ def get_SF_region(emission_data_dic):
     return AGN, CP, SF
 
 
-def get_dist_map(galaxy_id):
+def get_dist_map(galaxy_id,csv_path=None,fits_path=None):
     parent_path = '/Users/ymai0110/Documents/cluster_galaxies/'
     
+    if fits_path is None:
+        metal_fits_path =  parent_path +  'SAMI_metallicity/'
+        #sfr_path = spaxelsleuth_path + 'sfr_related/'
+        metal_fits = fits.open(metal_fits_path + str(galaxy_id) + '.fits')
+        map_shape = metal_fits['SCAL'].data.shape
+    else:
+        datapath = fits_path +  'dr3/ifs/' + str(galaxy_id) + '/'
+        datapath += str(galaxy_id) + '_A_' + 'Halpha'
+        datapath += '_default_recom-comp.fits'
+        fits_file = fits.open(datapath)
+        map_shape = fits_file[0].data.shape[1:]
     
-    metal_fits_path =  parent_path +  'SAMI_metallicity/'
-    #sfr_path = spaxelsleuth_path + 'sfr_related/'
+    if csv_path is None:
+    
+        cluster_csv = pd.read_csv(parent_path+
+                                  'cluster_classification_from_Oguzhan/'+
+                                  'SAMI_DR3_Cluster_Galaxies_Oguzhan_sample_metalyifan.csv')
+    else:
+        cluster_csv = pd.read_csv(csv_path)
     
     
-    cluster_csv = pd.read_csv(parent_path+
-                              'cluster_classification_from_Oguzhan/'+
-                              'SAMI_DR3_Cluster_Galaxies_Oguzhan_sample_metalyifan.csv')
-    
-    
-    metal_fits = fits.open(metal_fits_path + str(galaxy_id) + '.fits')
     
     # create dist_arr in kpc for this galaxy
     query = cluster_csv['CATID']==galaxy_id
     
-    map_shape = metal_fits['SCAL'].data.shape
+    
     
     xcen = map_shape[1]/2-0.5 # cube center and galaxy center, in the unit of pixel
     ycen = map_shape[0]/2-0.5

@@ -250,7 +250,7 @@ def plot_bpt(catid, ax_bptdiagram=None,ax_bptmap=None):
         ax_bptmap.set_xlabel('arcsec',fontsize=25)
         ax_bptmap.set_ylabel('arcsec',fontsize=25)
     
-def read_emi_dc(catid,emi_line):
+def read_emi_dc(catid,emi_line,datapath_other=None):
     '''
     read the emission line product from datacentral cubes
 
@@ -273,9 +273,13 @@ def read_emi_dc(catid,emi_line):
     
     datapath = '/Users/ymai0110/Documents/cluster_galaxies/SAMI_datacentral/'
     datapath += 'sami_strong_emission/'
+    if datapath_other is not None:
+        datapath = datapath_other
     datapath += 'dr3/ifs/' + str(catid) + '/'
     datapath += str(catid) + '_A_' + emi_line
     datapath += '_default_recom-comp.fits'
+    if not os.path.exists(datapath):
+        return None, None
     fits_file = fits.open(datapath)
     emi_map = fits_file[0].data
     emi_err_map = fits_file[1].data
